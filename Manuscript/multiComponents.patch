@@ -1,7 +1,7 @@
-diff --git a/Algorithm/multiComponents.jl b/Algorithm/multiComponents.jl
+diff --git a/multiComponents.jl b/multiComponents.jl
 index 5e0033c..a258913 100644
---- a/Algorithm/multiComponents.jl
-+++ b/Algorithm/multiComponents.jl
+--- a/multiComponents.jl
++++ b/multiComponents.jl
 @@ -10,13 +10,13 @@ function projectMatrix(sig, xVal)
  end
  
