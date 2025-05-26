@@ -1,0 +1,140 @@
+diff --git a/Algorithm/branchAndBound.jl b/Algorithm/branchAndBound.jl
+index b8d85ed..281dfda 100755
+--- a/Algorithm/branchAndBound.jl
++++ b/Algorithm/branchAndBound.jl
+@@ -1,8 +1,8 @@
+-using LinearAlgebra, Printf, Arpack
++using LinearAlgebra, Printf, Arpack, JLD2
+ function branchAndBound(prob, #problem object
+ 		K; # target sparsity
+ 		outputFlag = 3, # 1, 2, or 3 depending on level of detail sought in output
+-		timeCap = 3600, #maximum time in seconds
++		searchCap = 500000, # Search this number of nodes before quitting
+ 		warmStart = zeros(1), #warm start vector
+ 
+ 		maxDepth = 1000, #maximum number of active nodes in the tree
+@@ -14,7 +14,8 @@ function branchAndBound(prob, #problem object
+ 		gap = .000001, # optimality gap for the algorithm
+ 		eigGap = .00001, # convergence criterion for determining eigenavlues by power method
+ 		eigCycles = 500, # max number of iterations of the power method
+-		valtobeat = 0) # if non-zero, the algorithm will terminate once it has a solution with objective value larger than this
++		valtobeat = 0, # if non-zero, the algorithm will terminate once it has a solution with objective value larger than this
++    id = "") # identify the SPCA run
+ 
+ 	# computes the vector b that maximizes b'Qb
+ 	# subject to the support of b being <= abs(y)
+@@ -24,19 +25,34 @@ function branchAndBound(prob, #problem object
+ 	# more refinement would no longer impact the least upper bound
+ 	function bbMyeigmax(y, refineCap)
+ 		yKeep = .!(y.==0)
++		numKeep = sum(yKeep)
++
++		isMultipartiteProb = false
++		if isMultipartiteProb
++			# multipartite prob requires that it is not highDim
++			eigs = eigen(Hermitian(Sigma[yKeep,yKeep]))
++			ne = length(eigs.values)
++			normb = min(refineCap, eigs.values[ne])
++			expandedb = zeros(length(y))
++			expandedb[yKeep]=eigs.vectors[:,ne]
++			return normb, expandedb
++		end
+ 		thism=0
+ 		if highDim
+ 			thisA = copy(A[:, yKeep])
+ 			thism, ~ = size(thisA)
+ 			Q = thisA*thisA'/(thism-1)
+-			b = startingEig[yKeep]
++			# b = startingEig[yKeep]
++			b = ones(numKeep)
+ 			b = thisA*(b / LinearAlgebra.norm(b))
+ 			normb = 0
+ 			newnorm = LinearAlgebra.norm(b)
+ 		else
+ 			Q = copy(Sigma[yKeep,yKeep])
+-			beta0 = startingEig[yKeep]
+-			normb = LinearAlgebra.norm(beta0)
++			# beta0 = startingEig[yKeep]
++			# normb = LinearAlgebra.norm(beta0)
++			beta0 = ones(numKeep)
++			normb = sqrt(Float64(numKeep))
+ 			b = Q*beta0
+ 			newnorm = LinearAlgebra.norm(b)
+ 		end
+@@ -265,7 +281,7 @@ function branchAndBound(prob, #problem object
+ 
+ 	# Uses the Yuan algorithm to generate a warm start if none was provided
+ 	if length(warmStart)==1
+-		~, warmStart = subset(prob, K, timeLimit = max(20,timeCap/100))
++		~, warmStart = subset(prob, K, timeLimit = 10)
+ 	end
+ 
+ 
+@@ -302,15 +318,24 @@ function branchAndBound(prob, #problem object
+ 	explored = 0
+ 	lower_revised = 0
+ 	best_node = (warmStart.!=0)*1
++	
++	numProgress = 20
++	progressMarkers = Set(round.(range(0, stop = searchCap, length = numProgress+1))[2:numProgress+1])
+ 
+ 	#Initializes output
+-	println(" Nodes,   Left,  Objective,  Incumbent,       Gap(%),   Runtime(s)")
++	if outputFlag >= 1
++		println(" Nodes,   Left,  Objective,  Incumbent,       Gap(%),   Runtime(s)")
++	end
+ 	toPrint=[Printf.@sprintf("%6d, %6d, %10f, %10f, %10.3f %%, %10.3f s \n", num_nodes, explored, upper, lower, (upper-lower)/(1e-10+upper)*100, time()-start)]
+ 	printtime = time()
+ 
+-	while (upper - lower)/upper > gap  && time()-start < timeCap
++	while (upper - lower)/upper > gap  && explored < searchCap
+ 		explored = explored + 1
+ 
++		if outputFlag == 0 && explored in progressMarkers
++			print(".")
++		end
++
+ 		# Occasionally print updates and risize arrays
+ 		if lower_revised == 1 || size(nodes)[2]-num_nodes < K+5 || explored < 100
+ 			nodesToKeep = .!(upper_bounds.< lower) .& .!death
+@@ -376,6 +401,20 @@ function branchAndBound(prob, #problem object
+ 		oldub = upper_bounds[selected_node]
+ 		for i = 1:numBranches
+ 			lb, ub = return_bounds(newNodes[:,i], oldub)
++			if (ub - lb) / ub < -0.001
++        println(stderr, "Bug in UB calculation: ub ", ub, " < lb ", lb)
++				# Save the breakage test case
++				save_object(
++					"/tmp/julia" * id * "_e" * string(explored) * "b" * string(i) * ".jld2",
++					(
++						Sigma,
++						newNodes[:,i],
++						oldub,
++						lb,
++						ub
++					)
++				)
++			end
+ 			if ub*(1-gap) > lower
+ 				if lb > lower
+ 					lower = lb
+@@ -415,7 +454,7 @@ function branchAndBound(prob, #problem object
+ 
+ 	# records whether the algorithm timed out
+ 	timeOut = false
+-	if time()-start > timeCap
++	if explored >= searchCap
+ 		timeOut = true
+ 	end
+ 
+@@ -439,6 +478,10 @@ function branchAndBound(prob, #problem object
+ 
+ 	final_gap = max(0,(upper-lower)/(1e-10+upper)*100)
+ 
++	if outputFlag == 0
++		print("\n")
++	end
++
+ 	return obj, # objective value
+ 			xVal, # best feasible solution
+ 			timeToBestBound, # time elapsed from the state to the identification of the best feasible solution
